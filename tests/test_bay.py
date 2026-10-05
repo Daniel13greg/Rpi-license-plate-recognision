@@ -154,6 +154,49 @@ def test_read_request_continuous(setup):
     assert second.result["status"] == "recognized"
 
 
+def test_known_car_is_only_rechecked(setup):
+    recognizer = FakeRecognizer([make_read("KCA123")])
+    worker, events, advance = setup(recognizer)  # motion gating off: normally every frame is read
+    advance(1)
+    assert len(events) == 1
+    calls = recognizer.calls
+    advance(10)
+    assert recognizer.calls - calls == 5  # one check every 2 s instead of 40 reads
+    assert worker.status()["recognition"] == "recheck"
+    assert worker.status()["state"] == "occupied"
+
+
+def test_another_plate_brings_back_full_speed(setup):
+    recognizer = FakeRecognizer([make_read("KCA123")])
+    worker, events, advance = setup(recognizer)
+    advance(3)
+    recognizer.reads = [make_read("BLAB123")]
+    advance(2.5)  # the next recheck sees the new plate, then every frame is read again
+    assert [e.plate for e in events] == ["KCA123", "BLAB123"]
+
+
+def test_waiting_api_caller_gets_full_speed(setup):
+    recognizer = FakeRecognizer([make_read("KCA123")])
+    worker, _, advance = setup(recognizer)
+    advance(1)
+    recognizer.reads = []  # foam hides the plate for longer than FRESH_SECONDS
+    advance(12)
+    calls = recognizer.calls
+    request = worker.request_read()
+    advance(1)
+    assert recognizer.calls - calls == 4  # every frame while the caller waits
+    recognizer.reads = [make_read("KCA123")]
+    advance(1)
+    assert request.result["plate"] == "KCA123"
+
+
+def test_rechecking_can_be_turned_off(setup):
+    recognizer = FakeRecognizer([make_read("KCA123")])
+    _, _, advance = setup(recognizer, presence={"recheck_interval_seconds": 0})
+    advance(5)
+    assert recognizer.calls == 20
+
+
 def test_no_new_frames_means_no_recognition(setup):
     recognizer = FakeRecognizer([make_read("KCA123")])
     _, events, advance = setup(recognizer)

@@ -249,7 +249,7 @@ the response, so the two can be matched.
 
 ## 7. Testing the integration
 
-* From the Pi: `carwash-lpr send-test --plate "KCA 123" --type plate_recognized` sends one
+* From the Pi: `sudo carwash-lpr send-test --plate "KCA 123" --type plate_recognized` sends one
   event with the real headers and signature, and prints your response.
 * Without access to the Pi's shell:
   `curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"plate":"KCA 123"}' http://<pi>:8080/api/v1/bays/1/simulate`

@@ -96,3 +96,11 @@ def make_config(tmp_path, bays: list[dict] | None = None, **top) -> Config:
 @pytest.fixture
 def clock():
     return Clock()
+
+
+@pytest.fixture(autouse=True)
+def no_installed_config(tmp_path_factory, monkeypatch):
+    """Keep CLI tests away from a real /etc/carwash-lpr installation on the test machine."""
+    missing = tmp_path_factory.mktemp("no-install")
+    monkeypatch.setenv("CARWASH_LPR_CONFIG", str(missing / "config.yaml"))
+    monkeypatch.setenv("CARWASH_LPR_ENV_FILE", str(missing / "env"))

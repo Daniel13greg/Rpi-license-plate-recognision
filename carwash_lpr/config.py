@@ -133,10 +133,17 @@ class PresenceConfig:
     absence_timeout_seconds: float = 30.0  # plate unseen this long: the car has left
     repeat_cooldown_seconds: float = 300.0  # same plate again within this time: no new event
     report_departures: bool = False  # send vehicle_left (best effort without a sensor)
+    # Once the car in the bay is known, check its plate only this often instead of on every
+    # moving frame (washing looks like motion). Another plate brings back full speed.
+    # 0 = recognise whenever something moves.
+    recheck_interval_seconds: float = 2.0
 
     def validate(self, path: str) -> None:
         _check_range(f"{path}.absence_timeout_seconds", self.absence_timeout_seconds, 1.0, 86_400)
         _check_range(f"{path}.repeat_cooldown_seconds", self.repeat_cooldown_seconds, 0.0, 86_400)
+        _check_range(f"{path}.recheck_interval_seconds", self.recheck_interval_seconds, 0.0, 60)
+        if self.recheck_interval_seconds >= self.absence_timeout_seconds:
+            raise ConfigError(f"{path}.recheck_interval_seconds: must be shorter than absence_timeout_seconds")
 
 
 @dataclass

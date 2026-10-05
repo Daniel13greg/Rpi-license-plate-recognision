@@ -35,7 +35,8 @@ bay.
   cameras, keeps short-lived JPEG snapshots of each event, and has a status page for
   aiming the camera.
 * **Cameras.** Raspberry Pi Camera Module (Picamera2 or `rpicam-vid`), IP cameras
-  (RTSP), USB webcams. One Pi can serve several bays.
+  (RTSP), USB webcams. One Raspberry Pi 5 can serve 4–5 bays with IP cameras; bays take
+  turns fairly on the plate reader, and `carwash-lpr benchmark` measures the capacity.
 
 The neural networks are [open-image-models](https://github.com/ankandrew/open-image-models)
 (plate detector) and [fast-plate-ocr](https://github.com/ankandrew/fast-plate-ocr)
@@ -65,11 +66,14 @@ starts the `carwash-lpr` service. Then:
    ```
 2. Describe the bays and cameras in `/etc/carwash-lpr/config.yaml`. The
    [example](config/config.example.yaml) documents every option.
-3. `carwash-lpr check-config && sudo systemctl restart carwash-lpr`
+3. `sudo carwash-lpr check-config && sudo systemctl restart carwash-lpr`
 4. Open `http://<pi-address>:8080/?token=<LPR_API_TOKEN from the env file>` and aim the
    camera. The live image shows the search area and each plate with its read and its
    width in pixels.
-5. Test the link to the car wash system: `carwash-lpr send-test --plate "KCA 123"`.
+5. Test the link to the car wash system: `sudo carwash-lpr send-test --plate "KCA 123"`.
+
+On the Pi, commands use `/etc/carwash-lpr/config.yaml` and the secrets in
+`/etc/carwash-lpr/env` by default; `sudo` lets them read both, and the models.
 
 [docs/INSTALLATION.md](docs/INSTALLATION.md) covers hardware, camera placement, IP
 cameras, sensor wiring and a go-live checklist. [docs/INTEGRATION.md](docs/INTEGRATION.md)
@@ -130,7 +134,7 @@ signature, retries and the pull API are covered in [docs/INTEGRATION.md](docs/IN
 | Knows a car is there from | its plate being read | a GPIO presence sensor or `POST /api/v1/bays/{id}/read` |
 | Reports | `plate_recognized` once per visit | `plate_recognized`, or `plate_unrecognized` after `window_seconds` |
 | Car left | plate unseen for `absence_timeout_seconds` (best effort, off by default) | sensor released (`vehicle_left`) |
-| CPU | recognition while something moves | recognition only during the read window |
+| CPU | recognition while something moves; a car already identified is only re-checked every 2 s | recognition only during the read window |
 
 In continuous mode the same plate is not reported again within `repeat_cooldown_seconds`
 (5 min), counted from when it was last seen. A car standing in the bay is reported once,
@@ -171,8 +175,9 @@ used to fine-tune the OCR with
 | Status page | `http://<pi>:8080/?token=...` |
 | Health (for monitoring) | `curl http://<pi>:8080/health`: HTTP 200 or 503 |
 | Recent events and delivery status | `curl -H "Authorization: Bearer $TOKEN" http://<pi>:8080/api/v1/events` |
-| Validate config | `carwash-lpr check-config` |
-| Single camera image (service stopped) | `carwash-lpr snapshot --bay 1 --annotate -o snap.jpg` |
+| Validate config | `sudo carwash-lpr check-config` |
+| Single camera image (service stopped) | `sudo carwash-lpr snapshot --bay 1 --annotate -o snap.jpg` |
+| Capacity: plate reads per second per bay | `sudo carwash-lpr benchmark --bays 5` (plate reader only), or `sudo carwash-lpr benchmark --cameras` (the configured cameras incl. video decoding; service stopped) |
 | How a text is interpreted | `carwash-lpr plate "8LAB123"` |
 | Update | `git pull && sudo ./deploy/install.sh` (keeps config and data) |
 | Uninstall | `sudo ./deploy/uninstall.sh [--purge]` |
@@ -180,7 +185,8 @@ used to fine-tune the OCR with
 **Privacy.** Plates and snapshots are personal data under Moldova's Law 195/2024 on
 personal data protection (GDPR-aligned, in force since 23 August 2026). Keep
 `snapshot_retention_days` short, tell customers about the cameras (signs at the bays),
-set `api.token`, and keep the Pi on a private network.
+set `api.token`, and keep the Pi on a private network. ONNX Runtime's built-in usage
+telemetry to Microsoft is switched off (`ORT_DISABLE_TELEMETRY=1`).
 
 ## Development
 
@@ -199,6 +205,7 @@ carwash_lpr/
   recognizer.py  plate detector + OCR (ONNX Runtime)
   voting.py      multi-frame agreement
   bay.py         per-bay logic: continuous and trigger modes, read requests
+  benchmark.py   reads per second per bay on this computer
   camera.py      Picamera2, rpicam-vid, OpenCV (RTSP/USB/file) and image-folder sources
   outbox.py      SQLite event queue      sender.py   webhook delivery (retries, HMAC)
   api.py         local REST API + status page   service.py  wiring, watchdog

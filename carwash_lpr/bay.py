@@ -56,22 +56,31 @@ class ContinuousTracker:
     def __init__(self, presence: PresenceConfig, voting: VotingConfig):
         self.cfg = presence
         self.voter = PlateVoter(voting)
+        self.window = voting.window_seconds
         self.current: Candidate | None = None
         self.arrived_at = 0.0
         self.last_seen = 0.0
         self.reported = False  # whether the current car's arrival was reported
+        self.challenger_seen = float("-inf")  # another plate was read while a car is known
         self._recent: dict[str, float] = {}  # plate -> last time it was seen
 
-    def frame_policy(self) -> str:
-        return "motion"
+    def frame_policy(self, now: float) -> str:
+        """Watch for motion while the bay is empty or another plate shows up; once the car in
+        the bay is known, only recheck it now and then."""
+        if self.current is None or now - self.challenger_seen <= self.window:
+            return "motion"
+        return "recheck"
 
     def update(self, observation: Observation | None, now: float) -> list[Outcome]:
         outcomes: list[Outcome] = []
         if observation is not None:
             self.voter.add(observation)
-            if self.current is not None and same_vehicle(observation.plate, self.current.plate):
-                self.last_seen = now
-                self._recent[self.current.plate] = now
+            if self.current is not None:
+                if same_vehicle(observation.plate, self.current.plate):
+                    self.last_seen = now
+                    self._recent[self.current.plate] = now
+                else:
+                    self.challenger_seen = now
         self.voter.prune(now)
         candidates = self.voter.tally()
         decision = self.voter.decide(candidates)
@@ -83,6 +92,7 @@ class ContinuousTracker:
                 outcomes += self._departed()
                 previous = self._recent.get(decision.plate)
                 self.current, self.arrived_at, self.last_seen = decision, now, now
+                self.challenger_seen = float("-inf")
                 self._recent[decision.plate] = now
                 self.reported = previous is None or now - previous >= self.cfg.repeat_cooldown_seconds
                 if self.reported:
@@ -123,7 +133,7 @@ class TriggerTracker:
         self.vehicle_present = False  # the sensor has seen a car that has not left yet
         self.present_since = 0.0
 
-    def frame_policy(self) -> str:
+    def frame_policy(self, now: float) -> str:
         if self.phase == "reading":
             return "always"
         if self.phase == "idle" and self.cfg.pre_trigger_seconds > 0:
@@ -350,9 +360,13 @@ class BayWorker:
         return []
 
     def _should_recognize(self, frame: np.ndarray, now: float) -> bool:
-        policy = self.tracker.frame_policy()
+        if any(not r.done for r in self._requests):
+            return True  # an API caller is waiting for an answer
+        policy = self.tracker.frame_policy(now)
         if policy == "never":
             return False
+        if policy == "recheck" and self.bay.presence.recheck_interval_seconds > 0:
+            return now - self.last_recognition >= self.bay.presence.recheck_interval_seconds
         if policy == "always" or self.motion is None:
             return True
         x1, y1, x2, y2 = roi_pixels(self.bay.roi, frame.shape[1], frame.shape[0])
@@ -463,6 +477,7 @@ class BayWorker:
                 "name": self.bay.name,
                 "mode": self.bay.mode,
                 "state": tracker.state(),
+                "recognition": tracker.frame_policy(now),
                 "plate": current.plate if current else None,
                 "plate_display": current.display if current else None,
                 "sensor_active": tracker.sensor_active if isinstance(tracker, TriggerTracker) else None,
