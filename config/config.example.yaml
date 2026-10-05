@@ -1,0 +1,131 @@
+# carwash-lpr configuration
+#
+# Installed as /etc/carwash-lpr/config.yaml. After editing:
+#   carwash-lpr check-config && sudo systemctl restart carwash-lpr
+#
+# ${NAME} / ${NAME:-default} are replaced by environment variables. The service loads
+# them from /etc/carwash-lpr/env, so secrets do not need to be in this file.
+
+device_id: carwash-pi-01        # identifies this Raspberry Pi in every event
+site_id: ""                     # optional: which car wash (e.g. "chisinau-botanica")
+log_level: INFO                 # DEBUG logs every single OCR read
+data_dir: /var/lib/carwash-lpr  # events database, snapshots, models
+
+# Where the plates go: the car wash system's HTTP endpoint (see docs/INTEGRATION.md).
+webhook:
+  url: "${CARWASH_WEBHOOK_URL:-}"            # e.g. https://carwash.example.md/api/lpr/events
+  method: POST
+  timeout_seconds: 5
+  bearer_token: "${CARWASH_API_TOKEN:-}"     # sent as "Authorization: Bearer <token>"
+  hmac_secret: "${CARWASH_HMAC_SECRET:-}"    # signs requests (X-LPR-Signature)
+  headers: {}                                # extra HTTP headers, e.g. {X-Api-Key: "..."}
+  verify_tls: true
+  ca_bundle: null                            # CA file for a self-signed server certificate
+  max_event_age_seconds: 120                 # never deliver "car entered" events later than this
+  include_images: false                      # add base64 JPEGs of the plate and the frame
+  event_types: [plate_recognized, plate_unrecognized, vehicle_left]
+  # Reshape the JSON for an existing API. Placeholders are the fields of the standard
+  # event; a value that is exactly one placeholder keeps its type (numbers, null).
+  # payload_template:
+  #   licensePlate: "{plate}"
+  #   boxNumber: "{bay_id}"
+  #   recognizedAt: "{timestamp}"
+
+# Local HTTP API and status page: http://<pi-address>:8080/?token=<token>
+api:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+  token: "${LPR_API_TOKEN:-}"   # required by every endpoint except /health when set
+
+storage:
+  save_snapshots: true            # JPEG of the frame and plate for each event
+  snapshot_retention_days: 7      # snapshots are personal data: keep them short
+  max_snapshot_mb: 2000
+  event_retention_days: 30
+
+recognizer:
+  # Plate detector: yolo-v9-t-{256,384,416,512,640}-license-plate-end2end or
+  # yolo-v9-s-608-license-plate-end2end. 512 is the most reliable; 384 is ~1.7x faster
+  # (Pi 4, several bays) and works well once the ROI is set tightly around the plates.
+  detector_model: yolo-v9-t-512-license-plate-end2end
+  detector_confidence: 0.4
+  # OCR: cct-xs-v2-global-model (fast) or cct-s-v2-global-model (more accurate, slower).
+  ocr_model: cct-xs-v2-global-model
+  threads: 4                # CPU cores used by the networks
+  min_plate_width: 60       # pixels; ignore plates smaller than this (too far away)
+  edge_margin: 4            # ignore plates touching the image/ROI edge (cut off)
+  crop_padding: 0.04
+
+plates:
+  # moldova:         ABC 123, ION 7, BL AB 123 (pre-2015), A 123 BC (Transnistrian region)
+  # moldova_special: MAI 1234, FA 1234, RM 0001, CD 123 AB, H 1234
+  # foreign:         Romanian (B 123 ABC, CJ 12 ABC) and Ukrainian (AA 1234 BB)
+  # unknown:         anything else that the OCR reads from a plate
+  accept: [moldova, moldova_special, foreign]
+  min_read_confidence: 0.6
+
+voting:
+  window_seconds: 3.0     # reads older than this are forgotten
+  min_reads: 2            # frames that must agree on the plate
+  min_agreement: 0.6      # share of the votes the winner needs
+  min_confidence: 0.8     # average OCR confidence the winner needs
+
+bays:
+  - id: "1"               # sent as bay_id; letters, digits, - and _
+    name: "Box 1"
+    camera:
+      type: picamera2     # picamera2 | rpicam | opencv | images
+      index: 0            # CSI camera number (Pi 5 has two connectors: 0 and 1)
+      width: 1920
+      height: 1080
+      fps: 10
+      hflip: false
+      vflip: false
+      af_mode: default    # Camera Module 3: manual | auto | continuous
+      lens_position: null # manual focus in dioptres (1/metres): 0.25 = 4 m
+      exposure_time_us: null  # e.g. 2000 to freeze a moving car (needs good light / IR)
+      analogue_gain: null
+      controls: {}        # any other libcamera control, e.g. {AeExposureMode: 1}
+    roi: [0.0, 0.0, 1.0, 1.0]  # part of the image to search, x1 y1 x2 y2 as fractions
+    process_fps: 4
+    motion:
+      enabled: true
+      threshold: 0.005
+      hold_seconds: 5
+      idle_interval_seconds: 2
+    mode: continuous      # continuous: plate alone decides | trigger: sensor/API starts reads
+    presence:
+      absence_timeout_seconds: 30   # plate unseen this long: the car has left
+      repeat_cooldown_seconds: 300  # same plate within this time: no new event
+      report_departures: false
+    trigger:
+      gpio_pin: null
+      active_high: true
+      pull_up: null
+      activate_delay_seconds: 0.2
+      release_delay_seconds: 3.0
+      window_seconds: 10
+      pre_trigger_seconds: 2
+      report_unrecognized: true
+      report_departures: true
+
+  # A second bay with an IP camera and an induction loop detector whose relay
+  # contact connects GPIO17 (pin 11) to GND (pin 9) while a car is in the bay:
+  #
+  # - id: "2"
+  #   name: "Box 2"
+  #   camera:
+  #     type: opencv
+  #     url: "rtsp://user:${CAM2_PASSWORD}@192.168.1.64:554/Streaming/Channels/101"
+  #     rtsp_transport: tcp
+  #   roi: [0.2, 0.3, 0.8, 1.0]
+  #   mode: trigger
+  #   trigger:
+  #     gpio_pin: 17
+  #     pull_up: true
+  #     active_high: false
+  #     window_seconds: 10
+  #
+  # A USB webcam:   camera: {type: opencv, url: /dev/video0, width: 1280, height: 720}
+  # Dry run:        camera: {type: images, path: /var/lib/carwash-lpr/demo, fps: 4}

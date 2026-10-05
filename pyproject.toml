@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carwash-lpr"
+description = "Moldovan licence plate recognition on a Raspberry Pi for car wash bays"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dynamic = ["version"]
+dependencies = [
+    "numpy>=1.23",
+    "opencv-python-headless>=4.8",
+    "PyYAML>=6.0",
+    "requests>=2.28",
+    "fast-plate-ocr[onnx]>=1.1.0",
+    "open-image-models[onnx]>=0.6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+carwash-lpr = "carwash_lpr.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "carwash_lpr.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["carwash_lpr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
