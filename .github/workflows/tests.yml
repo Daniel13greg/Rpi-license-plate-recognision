@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Raspberry Pi OS Bookworm (Python 3.11, numpy 1.24)
+            python: "3.11"
+            constraints: numpy==1.24.2
+          - name: Raspberry Pi OS Trixie / latest (Python 3.13)
+            python: "3.13"
+            constraints: ""
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          echo "${{ matrix.constraints }}" > constraints.txt
+          python -m pip install --upgrade pip
+          pip install --constraint constraints.txt -e ".[dev]"
+      - name: Cache recognition models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/carwash-lpr/models
+          key: models-${{ hashFiles('carwash_lpr/config.py') }}
+      - name: Test
+        run: pytest -q
+      - name: Check shell scripts
+        run: for f in deploy/*.sh; do bash -n "$f"; done

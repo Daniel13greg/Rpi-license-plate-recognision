@@ -1,0 +1,32 @@
+[Unit]
+Description=Car wash licence plate recognition
+Documentation=https://github.com/Daniel13greg/Rpi-license-plate-recognision
+Wants=network-online.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=carwash-lpr
+Group=carwash-lpr
+Environment=HOME=/var/lib/carwash-lpr
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/carwash-lpr/env
+ExecStart=/opt/carwash-lpr/venv/bin/carwash-lpr run -c /etc/carwash-lpr/config.yaml
+# Restarted if it crashes, or if it stops feeding the watchdog (stalled camera or thread).
+Restart=always
+RestartSec=5
+# Exit status 2 is a configuration error: restarting would not help.
+RestartPreventExitStatus=2
+WatchdogSec=90
+TimeoutStartSec=300
+TimeoutStopSec=30
+# Hardening; camera and GPIO devices must stay visible, so no PrivateDevices.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/carwash-lpr
+
+[Install]
+WantedBy=multi-user.target
