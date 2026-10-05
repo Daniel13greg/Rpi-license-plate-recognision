@@ -12,10 +12,41 @@ import time
 from pathlib import Path
 
 from carwash_lpr import __version__, plates
-from carwash_lpr.config import CATEGORIES, Config, ConfigError, PlatesConfig, RecognizerConfig, load_config, redacted
+from carwash_lpr.config import (
+    CATEGORIES, Config, ConfigError, PlatesConfig, RecognizerConfig, VotingConfig, load_config, redacted,
+)
 
-DEFAULT_CONFIG = os.environ.get("CARWASH_LPR_CONFIG", "/etc/carwash-lpr/config.yaml")
 log = logging.getLogger("carwash_lpr")
+
+
+def default_config() -> str:
+    return os.environ.get("CARWASH_LPR_CONFIG", "/etc/carwash-lpr/config.yaml")
+
+
+def default_env_file() -> str:
+    return os.environ.get("CARWASH_LPR_ENV_FILE", "/etc/carwash-lpr/env")
+
+
+def load_env_file(path: str) -> bool:
+    """Load the service's secrets (systemd EnvironmentFile syntax) without overriding the
+    environment, so commands run by hand see the same ${NAME} values as the service."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError) as exc:
+        hint = "; run with sudo" if isinstance(exc, PermissionError) else ""
+        print(f"note: cannot read {path} (secrets for the configuration): {exc}{hint}", file=sys.stderr)
+        return False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+    return True
 
 
 def setup_logging(level: str = "INFO", verbose: bool = False) -> None:
@@ -210,6 +241,43 @@ def cmd_demo_images(args) -> int:
     return 0
 
 
+def cmd_benchmark(args) -> int:
+    from carwash_lpr import benchmark
+    from carwash_lpr.camera import CameraError
+    from carwash_lpr.recognizer import PlateRecognizer
+
+    cfg = load_config(args.config) if args.config else None
+    if args.cameras and cfg is None:
+        raise ConfigError("--cameras needs the configuration file (-c)")
+    if args.seconds <= 0 or (args.bays is not None and not 1 <= args.bays <= 32):
+        raise ConfigError("--seconds must be positive and --bays between 1 and 32")
+    rec_cfg = cfg.recognizer if cfg else RecognizerConfig()
+    min_reads = cfg.voting.min_reads if cfg else VotingConfig().min_reads
+    header = f"Plate reader: {rec_cfg.detector_model} + {rec_cfg.ocr_model}, {rec_cfg.threads} threads"
+    print("loading the plate reader...", file=sys.stderr)
+    recognizer = PlateRecognizer(rec_cfg, _models_dir(cfg))
+    if args.cameras:
+        cameras = "1 camera" if len(cfg.bays) == 1 else f"{len(cfg.bays)} cameras"
+        print(f"opening {cameras}, then measuring for {args.seconds:.0f} s...", file=sys.stderr)
+        try:
+            report = benchmark.run_with_cameras(cfg, recognizer, args.seconds)
+        except CameraError as exc:
+            print(f"camera problem: {exc}", file=sys.stderr)
+            return 1
+    else:
+        bays = args.bays or (len(cfg.bays) if cfg else 4)
+        camera = cfg.bays[0].camera if cfg else None
+        width = args.width or (camera.width if camera else 1920)
+        height = args.height or (camera.height if camera else 1080)
+        if width < 640 or height < 360:
+            raise ConfigError("frames must be at least 640x360")
+        rois = [bay.roi for bay in cfg.bays] if cfg else [[0.0, 0.0, 1.0, 1.0]]
+        print(f"simulating {benchmark.bays_text(bays)} for {args.seconds:.0f} s...", file=sys.stderr)
+        report = benchmark.run_synthetic(recognizer, bays, (width, height), rois, args.seconds)
+    print(benchmark.format_report(report, min_reads, header))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="carwash-lpr", description="Moldovan licence plate recognition for car wash bays"
@@ -217,10 +285,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    config_path = default_config()
+    env_file = default_env_file()
+
     def with_config(p: argparse.ArgumentParser, required: bool = True) -> argparse.ArgumentParser:
+        # Optional configs still default to the installed one, so that on the Pi every
+        # command uses the service's settings and models.
+        installed = os.path.exists(config_path)
         p.add_argument(
-            "-c", "--config", default=DEFAULT_CONFIG if required else None,
-            help=f"configuration file (default: {DEFAULT_CONFIG})" if required else "configuration file",
+            "-c", "--config", default=config_path if required or installed else None,
+            help=f"configuration file (default: {config_path}{'' if required else ', if it exists'})",
+        )
+        p.add_argument(
+            "--env-file", default=env_file,
+            help=f"secrets referenced as ${{NAME}} in the configuration (default: {env_file})",
         )
         return p
 
@@ -256,6 +334,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--annotate", action="store_true", help="run recognition and mark ROI and plates")
     p.set_defaults(func=cmd_snapshot)
 
+    p = with_config(
+        sub.add_parser("benchmark", help="measure how many plate reads per second each bay gets on this Pi"),
+        required=False,
+    )
+    p.add_argument("--bays", type=int, help="number of simulated bays (default: as configured, or 4)")
+    p.add_argument("--seconds", type=float, default=20.0, help="how long all bays run at once (default: 20)")
+    p.add_argument(
+        "--cameras", action="store_true",
+        help="use the configured cameras, so video decoding is included (stop the service first)",
+    )
+    p.add_argument("--width", type=int, help="simulated frame width (default: first bay's camera, or 1920)")
+    p.add_argument("--height", type=int, help="simulated frame height (default: first bay's camera, or 1080)")
+    p.set_defaults(func=cmd_benchmark)
+
     p = sub.add_parser("demo-images", help="write synthetic camera frames for a dry run without a camera")
     p.add_argument("folder")
     p.add_argument("--plates", nargs="+", default=["KCA 123", "BL AB 123", "ION 7"])
@@ -267,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command != "run":
         setup_logging("WARNING")
+    if getattr(args, "config", None) and getattr(args, "env_file", None):
+        load_env_file(args.env_file)
     try:
         return args.func(args)
     except ConfigError as exc:

@@ -1,7 +1,7 @@
 # carwash-lpr configuration
 #
 # Installed as /etc/carwash-lpr/config.yaml. After editing:
-#   carwash-lpr check-config && sudo systemctl restart carwash-lpr
+#   sudo carwash-lpr check-config && sudo systemctl restart carwash-lpr
 #
 # ${NAME} / ${NAME:-default} are replaced by environment variables. The service loads
 # them from /etc/carwash-lpr/env, so secrets do not need to be in this file.
@@ -99,6 +99,8 @@ bays:
       absence_timeout_seconds: 30   # plate unseen this long: the car has left
       repeat_cooldown_seconds: 300  # same plate within this time: no new event
       report_departures: false
+      recheck_interval_seconds: 2   # known car in the bay: re-read its plate only this often
+                                    # (washing looks like motion); 0 = on every moving frame
     trigger:
       gpio_pin: null
       active_high: true

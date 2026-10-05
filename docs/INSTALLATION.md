@@ -88,7 +88,7 @@ Secrets go in `/etc/carwash-lpr/env`, everything else in
 [example](../config/config.example.yaml)). After changes:
 
 ```bash
-carwash-lpr check-config && sudo systemctl restart carwash-lpr
+sudo carwash-lpr check-config && sudo systemctl restart carwash-lpr
 journalctl -u carwash-lpr -f
 ```
 
@@ -150,16 +150,47 @@ Without a sensor, trigger mode still works through the API: the bay terminal cal
 
 ## 7. Several bays on one Pi
 
-Add one entry per bay under `bays:` with its own camera. Two camera modules on a Pi 5 use
-`index: 0` and `index: 1`; IP cameras are only limited by CPU. All bays share the
-recognizer and take turns. With several busy bays, lower `process_fps`, enable motion
-gating, set tight ROIs or use the 384 detector. Watch the CPU with `top` and the
-temperature with `vcgencmd measure_temp`.
+One Raspberry Pi 5 can serve 4–5 bays:
+
+* **Use IP cameras.** A Pi 5 has two camera connectors (a Pi 4 has one) and their cables
+  are short. Put one PoE IP camera in each bay, cabled to a PoE switch next to the Pi,
+  and add one entry per bay under `bays:`.
+* **Set each camera's stream to H.264, 8–10 frames per second**, 1080p (or 720p if
+  plates are still at least 120 px wide). The Pi 5 has no hardware H.264 decoder, so
+  decoding the streams costs CPU in proportion to their frame rate; 25 fps would waste
+  most of it.
+* **Keep the CPU savers on:** motion gating, a tight `roi` per bay, `process_fps` of 2–4,
+  and `presence.recheck_interval_seconds: 2`. With rechecking, a car that has already been
+  identified is only re-read every 2 seconds, even while it is being washed (spray looks
+  like motion). Trigger mode with presence sensors uses the least CPU of all.
+* All bays share one plate reader and take turns in arrival order, so when several cars
+  arrive at once each bay gets an equal share.
+
+**Measure before buying everything.** On the Pi:
+
+```bash
+sudo carwash-lpr benchmark --bays 5     # the plate reader alone
+sudo systemctl stop carwash-lpr
+sudo carwash-lpr benchmark --cameras    # the configured cameras, decoding included
+sudo systemctl start carwash-lpr
+```
+
+The report shows how many plate reads per second each bay gets when all bays are busy at
+the same moment, and how long identifying a car takes. Two or more reads per second per
+bay is good: a car is identified about a second after its plate becomes readable. With a
+single camera bought so far, point all five test bays at the same camera URL: most IP
+cameras serve several streams at once, so this measures the full decoding load.
+
+If it is too slow, use the faster `yolo-v9-t-384-license-plate-end2end` detector, lower
+the camera frame rates, or split the bays over two Pis. Two Pis also mean that one
+failure only sends some bays back to manual payment. Watch the temperature with
+`vcgencmd measure_temp`: above about 80 °C the Pi slows itself down, so use the active
+cooler.
 
 ## 8. Go-live checklist
 
-- [ ] `carwash-lpr check-config` passes; `api.token` is set; the webhook URL is `https://`.
-- [ ] `carwash-lpr send-test --plate "KCA 123"` is delivered (HTTP 2xx).
+- [ ] `sudo carwash-lpr check-config` passes; `api.token` is set; the webhook URL is `https://`.
+- [ ] `sudo carwash-lpr send-test --plate "KCA 123"` is delivered (HTTP 2xx).
 - [ ] `timedatectl` shows a synchronised clock.
 - [ ] 10 or more test drives per bay with different cars. Check `/api/v1/events` and the
       snapshots in `/var/lib/carwash-lpr/snapshots`.

@@ -11,6 +11,8 @@ User=carwash-lpr
 Group=carwash-lpr
 Environment=HOME=/var/lib/carwash-lpr
 Environment=PYTHONUNBUFFERED=1
+# No usage telemetry from ONNX Runtime to Microsoft.
+Environment=ORT_DISABLE_TELEMETRY=1
 EnvironmentFile=-/etc/carwash-lpr/env
 ExecStart=/opt/carwash-lpr/venv/bin/carwash-lpr run -c /etc/carwash-lpr/config.yaml
 # Restarted if it crashes, or if it stops feeding the watchdog (stalled camera or thread).

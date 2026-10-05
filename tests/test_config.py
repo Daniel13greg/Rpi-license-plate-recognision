@@ -63,6 +63,7 @@ def test_types_are_coerced_from_strings():
         (minimal(webhook={"url": "ftp://x"}), "http"),
         (minimal(plates={"accept": ["martian"]}), "is not one of"),
         ({"bays": [{"id": "1", "camera": {"type": "images"}}]}, "path: required"),
+        ({"bays": [{"id": "1", "presence": {"recheck_interval_seconds": 30}}]}, "shorter than absence_timeout"),
         (minimal(recognizer={"ocr_model_path": "x.onnx"}), "ocr_config_path"),
     ],
 )

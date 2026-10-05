@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, Sequence
@@ -42,6 +43,44 @@ class PlateRead:
     @property
     def area(self) -> int:
         return (self.box[2] - self.box[0]) * (self.box[3] - self.box[1])
+
+
+class FairLock:
+    """A lock handed over to waiting threads in arrival order.
+
+    ``threading.Lock`` lets the releasing thread grab it straight back. With several busy
+    bays sharing one plate reader, that starves some bays (measured: 5 reads/s for one,
+    0.7 for another). Here ownership passes directly to the longest waiting thread.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._waiters: deque[threading.Lock] = deque()
+        self._locked = False
+
+    def acquire(self) -> None:
+        with self._guard:
+            if not self._locked:
+                self._locked = True
+                return
+            turn = threading.Lock()
+            turn.acquire()
+            self._waiters.append(turn)
+        turn.acquire()  # released by release() when it is this thread's turn
+
+    def release(self) -> None:
+        with self._guard:
+            if self._waiters:
+                self._waiters.popleft().release()  # stays locked: ownership moves on
+            else:
+                self._locked = False
+
+    def __enter__(self) -> "FairLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
 
 
 class Recognizer(Protocol):
@@ -107,6 +146,8 @@ class PlateRecognizer:
         from fast_plate_ocr import LicensePlateRecognizer
         from open_image_models import create_detector
 
+        # open-image-models pins its logger to INFO on import; follow our log level instead.
+        logging.getLogger("open_image_models.detection.core.yolo_v9.inference").setLevel(logging.NOTSET)
         self.cfg = cfg
         detector_path, ocr_model, ocr_config = ensure_models(cfg, models_dir)
         providers = ["CPUExecutionProvider"]
@@ -126,7 +167,7 @@ class PlateRecognizer:
         )
         self.color_mode = self.ocr.config.image_color_mode
         self.pad_char = self.ocr.config.pad_char or ""
-        self._lock = threading.Lock()
+        self._lock = FairLock()
         log.info("recognizer ready: detector %s, OCR %s", detector_path.name, ocr_model.name)
 
     def recognize(self, frame: np.ndarray, roi: Box | None = None) -> list[PlateRead]:

@@ -62,8 +62,17 @@ def test_empty_bay_has_no_plates(recognizer):
     assert plates_in(recognizer, render_scene(None)) == []
 
 
+def test_benchmark_command(recognizer, capsys):
+    from carwash_lpr.cli import main
+
+    assert main(["benchmark", "--bays", "2", "--seconds", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "simulated bay 2" in out
+    assert "reads/s in total" in out
+
+
 def test_whole_pipeline_from_camera_to_webhook(tmp_path, recognizer):
-    write_demo_images(tmp_path / "frames", ["KCA 123", "BL AB 123"], frames_per_car=16, empty_frames=8)
+    write_demo_images(tmp_path / "frames", ["KCA 123", "BL AB 123"], frames_per_car=24, empty_frames=8)
     receiver = Receiver()
     cfg = make_config(
         tmp_path,

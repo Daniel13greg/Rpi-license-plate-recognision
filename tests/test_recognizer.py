@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -34,3 +38,12 @@ def test_model_problems_are_configuration_errors(tmp_path):
     detector.write_bytes(b"")
     with pytest.raises(ConfigError, match="ocr_model: unknown model"):
         ensure_models(RecognizerConfig(detector_model_path=str(detector), ocr_model="nope"), tmp_path)
+
+
+def test_onnx_runtime_telemetry_is_off(tmp_path):
+    pytest.importorskip("onnxruntime")
+    env = {k: v for k, v in os.environ.items() if k != "ORT_DISABLE_TELEMETRY"}
+    env["HOME"] = str(tmp_path)
+    code = "import carwash_lpr, onnxruntime, time; time.sleep(1)"
+    subprocess.run([sys.executable, "-c", code], env=env, check=True, timeout=120)
+    assert not (tmp_path / ".cache" / "Microsoft").exists()  # no telemetry device id or queue

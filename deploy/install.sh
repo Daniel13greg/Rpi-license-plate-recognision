@@ -119,7 +119,7 @@ cat <<EOF
 Installed. Next steps:
   1. Set the car wash system's address and secrets:   sudo nano $CONF_DIR/env
   2. Adjust bays, cameras and options:                 sudo nano $CONF_DIR/config.yaml
-  3. Check and apply:   carwash-lpr check-config && sudo systemctl restart carwash-lpr
+  3. Check and apply:   sudo carwash-lpr check-config && sudo systemctl restart carwash-lpr
   4. Aim the camera:    http://${ip_address:-<pi-address>}:8080/?token=$token
   5. Logs:              journalctl -u carwash-lpr -f
 EOF
